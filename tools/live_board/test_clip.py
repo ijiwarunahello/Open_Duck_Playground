@@ -14,5 +14,6 @@ def test_select_lanes():
 
 
 def test_lane_label():
-    assert lane_label(0) == "0ぷん"
-    assert lane_label(186) == "3じかん6ぷん"
+    assert lane_label(0) == "0{分|ぷん}"
+    assert lane_label(186) == "3{時間|じかん}6{分|ぷん}"
+    assert lane_label(120) == "2{時間|じかん}"

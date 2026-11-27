@@ -6,7 +6,7 @@
 <title>duck live</title>
 <!--
 Live board for the booth Mac. Put this file next to the recorded videos (iCloud media folder)
-and open it full screen. Query: ?src=<data server URL>&script=kana|kanji
+and open it full screen. Query: ?src=<data server URL>&script=kana (default: kanji with ruby)
 Data: <src>/status.json and <src>/clips/<file> (tools/live_board/server.py behind tailscale serve).
 When the data cannot be fetched (3 misses in a row) or is older than 30 minutes, the recorded
 videos next to this file play instead; the board comes back as soon as data is fresh again.
@@ -57,7 +57,7 @@ videos next to this file play instead; the board comes back as soon as data is f
 <script>
 const q = new URLSearchParams(location.search);
 const SRC = (q.get("src") || (location.protocol.startsWith("http") ? location.origin : "https://cosmic-explorer-node.tail4c00fe.ts.net")).replace(/\/$/, "");
-const KANJI = q.get("script") === "kanji";
+const KANJI = q.get("script") !== "kana";  // kanji with ruby by default (user, 11-28)
 const POLL_MS = 30000, MISSES = 3, STALE_S = 30 * 60;
 const RECORDED = KANJI
   ? ["yumetamago_race_20261127_kanji.mp4", "yumetamago_crowd_20261128_kanji.mp4"]
@@ -66,7 +66,7 @@ const RECORDED = KANJI
 // {base|ruby} -> <ruby> in kanji mode, base only... kana strings carry no markup.
 const T = KANJI ? {
   live: "いま {練習中|れんしゅうちゅう}", done: "{練習|れんしゅう} おわり", de: "で",
-  h: "{時間|じかん}", days: (d) => `${d}{日分|にちぶん}`, did: "{練習|れんしゅう}した", curve: "じょうずさ",
+  h: "{時間|じかん}", days: (d) => `${d}{日分|にちぶん}`, did: "{練習|れんしゅう}した", curve: "{上手|じょうず}さ",
 } : {
   live: "いま れんしゅうちゅう", done: "れんしゅう おわり", de: "で",
   h: "じかん", days: (d) => `${d}にちぶん`, did: "れんしゅうした", curve: "じょうずさ",
@@ -103,7 +103,7 @@ function drawCurve(st) {
     `<line x1="8" y1="292" x2="392" y2="292" stroke="#2a322e" stroke-width="2" vector-effect="non-scaling-stroke"/>` +
     `<path d="${d}" fill="none" stroke="#f3f5f2" stroke-width="3" stroke-linejoin="round" vector-effect="non-scaling-stroke"/>` +
     `<circle cx="${X(last[0])}" cy="${Y(last[1])}" r="6" fill="#e2551b"/>`;
-  svg.setAttribute("aria-label", `${T.curve}: ${last[1]}`);
+  svg.setAttribute("aria-label", `${T.curve.replace(/\{([^|}]+)\|[^}]+\}/g, "$1")}: ${last[1]}`);
 }
 
 function render() {
@@ -116,7 +116,7 @@ function render() {
   $("de").innerHTML = ruby(T.de);
   $("days").innerHTML = ruby(T.days(Math.floor(st.practice_days)));
   $("did").innerHTML = ruby(T.did);
-  $("curve-title").textContent = T.curve;
+  $("curve-title").innerHTML = ruby(T.curve);
   drawCurve(st);
   const latest = st.clips.length ? st.clips[st.clips.length - 1].file : null;
   const v = $("clip");

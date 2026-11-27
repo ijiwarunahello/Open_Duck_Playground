@@ -37,7 +37,7 @@ def select_lanes(n_ckpts: int, n: int = N_LANES):
 def lane_label(minutes: int) -> str:
     from texts import clock_text
 
-    return clock_text(minutes, "kana").split(" ", 1)[1]
+    return clock_text(minutes, "kanji").split(" ", 1)[1]
 
 
 def simulate(lanes):
