@@ -15,11 +15,33 @@ FALL_Z = 0.08  # base height below which a duck counts as fallen (standing ~0.16
 
 
 class Lane:
-    def __init__(self, onnx_path: str, label: str, lane_y: float):
+    def __init__(self, onnx_path: str, label: str, lane_y: float, lane_x: float = 0.0):
         self.label = label
         self.inf = MjInfer(SCENE_XML, REFERENCE, onnx_path, False)
         self.model, self.data = self.inf.model, self.inf.data
+        self.data.qpos[0] += lane_x
         self.data.qpos[1] = lane_y
+        self._start_qpos = self.data.qpos.copy()
+        self.fallen = False
+        self._counter = 0
+
+    def reset(self) -> None:
+        """Back to the start pose with zero velocity and a fresh action history
+        (what a training episode reset does)."""
+        import mujoco
+
+        s, d = self.inf, self.data
+        d.qpos[:] = self._start_qpos
+        d.qvel[:] = 0.0
+        s.last_action = np.zeros(s.num_dofs)
+        s.last_last_action = np.zeros(s.num_dofs)
+        s.last_last_last_action = np.zeros(s.num_dofs)
+        s.motor_targets = s.default_actuator.copy()
+        s.prev_motor_targets = s.default_actuator.copy()
+        s.imitation_i = 0
+        s.imitation_phase = np.array([0, 0])
+        d.ctrl[:] = s.default_actuator
+        mujoco.mj_forward(self.model, d)
         self.fallen = False
         self._counter = 0
 
