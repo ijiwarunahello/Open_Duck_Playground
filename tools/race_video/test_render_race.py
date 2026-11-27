@@ -81,3 +81,20 @@ def test_text_sizes_meet_plan_floor_and_closing_lines_fit():
     for line in R.END_LINES:
         assert f.getlength(line) <= R.W - 80, line
     assert "".join(R.END_LINES[1:]) == "となりの duck も、こうして れんしゅうした AI で あるいています"
+
+
+def test_timeline_has_crowd_scene_after_results():
+    import render_race as R
+    assert (R.T_REPLAY_END, R.T_RESULTS_END, R.T_END) == (38.0, 42.0, 52.0)
+    assert R.CROWD_TEXT == "8192たいで いっしょに れんしゅう"
+    assert R.CROWD_CKPT.name == "2026_11_27_023811_85852160.onnx"
+
+
+def test_crowd_cam_pulls_back():
+    import render_race as R
+    near, far = R.crowd_cam(0.0, (0.4, 0.4)), R.crowd_cam(1.0, (0.4, 0.4))
+    assert near["distance"] == pytest.approx(0.8)
+    assert far["distance"] == pytest.approx(11.0)
+    assert near["lookat"][:2] == pytest.approx((0.4, 0.4))
+    ds = [R.crowd_cam(a / 10, (0.4, 0.4))["distance"] for a in range(11)]
+    assert all(b >= a for a, b in zip(ds, ds[1:]))

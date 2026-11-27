@@ -18,7 +18,13 @@ FONT = "/mnt/c/Windows/Fonts/BIZ-UDGothicB.ttc"
 SPACING = 0.55  # with lane-centre steering the closest approach is ~0.45 m below spacing
 
 # video timeline (seconds)
-T_PAN, T_GO, T_RACE, T_RACE_END, T_REPLAY_END, T_END = 4.0, 10.0, 12.0, 30.0, 38.0, 45.0
+T_PAN, T_GO, T_RACE, T_RACE_END, T_REPLAY_END, T_RESULTS_END, T_END = 4.0, 10.0, 12.0, 30.0, 38.0, 42.0, 52.0
+CROWD_TEXT = "8192たいで いっしょに れんしゅう"
+CROWD_SIDE = 20  # 20 x 20 = 400 ducks
+CROWD_WARMUP_S = 5.0
+CROWD_SEED = 42
+from lanes import CKPT as _CKPT  # noqa: E402
+CROWD_CKPT = _CKPT / "2026_11_27_023811_85852160.onnx"  # 54 minutes: walks, still falls sometimes
 REPLAY_SIM = (13.6, 16.8)  # sim window shown in slow motion (push happens at 14.25)
 REPLAY_SPEED = 0.4
 FADE_S = 0.5
@@ -119,7 +125,7 @@ def simulate(lanes, push_time, push_vel, goal_x=1.2):
 # ---------- drawing ----------
 
 class Stage:
-    def __init__(self, model, width, height):
+    def __init__(self, model, width, height, max_geom=10000):
         import mujoco
 
         self.mj = mujoco
@@ -127,7 +133,7 @@ class Stage:
         self.m.vis.global_.offwidth = max(self.m.vis.global_.offwidth, width)
         self.m.vis.global_.offheight = max(self.m.vis.global_.offheight, height)
         self.d = mujoco.MjData(model)
-        self.r = mujoco.Renderer(model, height, width)
+        self.r = mujoco.Renderer(model, height, width, max_geom=max_geom)
         self.w, self.h = width, height
         self.fovy = float(model.vis.global_.fovy)
         self.opt, self.pert = mujoco.MjvOption(), mujoco.MjvPerturb()
@@ -216,6 +222,13 @@ def wide_cam(n_lanes, goal_x):
     return dict(lookat=(goal_x / 2 + 0.1, (n_lanes - 1) * SPACING / 2, 0.05), distance=3.3, azimuth=180.0, elevation=-30.0)
 
 
+def crowd_cam(a, focus):
+    """a: 0 -> 1 over the crowd scene. Starts on one duck and pulls back over the whole crowd."""
+    e = ease(a)
+    return dict(lookat=(focus[0] * (1 - e), focus[1] * (1 - e), 0.12 * (1 - e)),
+                distance=0.8 + (11.0 - 0.8) * e, azimuth=150.0 - 25.0 * a, elevation=-12.0 - 22.0 * e)
+
+
 def end_cam(n_lanes, goal_x):
     return dict(lookat=(goal_x, (n_lanes - 1) * SPACING / 2, 0.0), distance=3.9, azimuth=180.0, elevation=-38.0)
 
@@ -250,7 +263,13 @@ def render(out_path, lanes_spec=None, push_time=None, push_vel=None, goal_x=None
     results = [result_label(bool(fallen[-1, i]), float(final[i, 0] - frames[0, i, 0]), goal_x) for i in range(n)]
     print("results:", list(zip(labels, results)), flush=True)
 
+    print("simulating crowd...", flush=True)
+    from crowd import simulate_crowd
+    crowd_frames, _ = simulate_crowd(str(CROWD_CKPT), CROWD_SIDE, T_END - T_RESULTS_END, warmup=CROWD_WARMUP_S, seed=CROWD_SEED)
+    centre = int(np.argmin(np.linalg.norm(crowd_frames[0, :, :2], axis=1)))
+    crowd_focus = tuple(crowd_frames[0, centre, :2])
     stage = Stage(lanes[0].model, W, H)
+    crowd_stage = Stage(lanes[0].model, W, H, max_geom=CROWD_SIDE * CROWD_SIDE * 60)
     half = Stage(lanes[0].model, W // 2, H)
     ov = Overlay()
     lines = course_lines(n, goal_x)
@@ -308,8 +327,8 @@ def render(out_path, lanes_spec=None, push_time=None, push_vel=None, goal_x=None
             dr.rectangle((W // 2 - 4, 0, W // 2 + 4, H), fill=(255, 255, 255, 255))
             ov.panel(dr, "スロー", (W - 140, H - 80), 48, fg=(255, 255, 255), bg=(0, 0, 0, 150))
             frame = np.asarray(img)
-        else:
-            a = (t - T_REPLAY_END) / (T_END - T_REPLAY_END)
+        elif t < T_RESULTS_END:
+            a = (t - T_REPLAY_END) / (T_RESULTS_END - T_REPLAY_END)
             cam = dict(end_cam(n, goal_x), azimuth=180.0 - 6.0 * a)
             img = Image.fromarray(stage.draw(final, cam, lines))
             dr = ImageDraw.Draw(img, "RGBA")
@@ -319,8 +338,18 @@ def render(out_path, lanes_spec=None, push_time=None, push_vel=None, goal_x=None
                 ov.panel(dr, results[i], (u, v + 26), LABEL_PX, fg=(255, 255, 255), bg=(226, 85, 27, 235))
             if t >= T_REPLAY_END + 1.0:
                 dr.rectangle((0, 0, W, H), fill=(0, 0, 0, 90))
-                ov.panel(dr, END_LINES[0], (W / 2, H - 330), END_PX + 8)
-            if t >= T_REPLAY_END + 2.5:
+                ov.panel(dr, END_LINES[0], (W / 2, H - 120), END_PX + 8)
+            frame = np.asarray(img)
+        else:
+            a = (t - T_RESULTS_END) / (T_END - T_RESULTS_END)
+            q = crowd_frames[min(int(round((t - T_RESULTS_END) * FPS)), len(crowd_frames) - 1)]
+            cam = crowd_cam(min(1.0, a / 0.6), crowd_focus)
+            img = Image.fromarray(crowd_stage.draw(q, cam))
+            dr = ImageDraw.Draw(img, "RGBA")
+            if t >= T_RESULTS_END + 2.5:
+                ov.panel(dr, CROWD_TEXT, (W / 2, 110), END_PX + 8)
+            if t >= T_RESULTS_END + 5.0:
+                dr.rectangle((0, H - 300, W, H), fill=(0, 0, 0, 90))
                 ov.panel(dr, END_LINES[1], (W / 2, H - 205), END_PX)
                 ov.panel(dr, END_LINES[2], (W / 2, H - 95), END_PX)
             frame = np.asarray(img)
@@ -331,6 +360,7 @@ def render(out_path, lanes_spec=None, push_time=None, push_vel=None, goal_x=None
         if k % 150 == 0:
             print(f"frame {k}/{total}", flush=True)
     stage.close()
+    crowd_stage.close()
     half.close()
     mediapy.set_ffmpeg(imageio_ffmpeg.get_ffmpeg_exe())
     mediapy.write_video(out_path, out, fps=FPS)
