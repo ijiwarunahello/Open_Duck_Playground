@@ -1,5 +1,9 @@
 """One short clip for the live board: up to 5 checkpoints of the same run race side by side.
 
+The video carries no text. Next to it, clip_<step>.json holds each lane's training time and
+its sign anchor per frame (fractions of the frame size), and board.html draws the signs, so
+wording and script change in the page alone.
+
 Lanes are the first checkpoint, the latest one and evenly spaced ones between, so each new
 clip shows "how far it has come". Same start, command and push for every lane, as in the
 race video (tools/race_video). Run with cwd = repository root and
@@ -7,6 +11,7 @@ MUJOCO_GL=egl PYOPENGL_PLATFORM=egl GALLIUM_DRIVER=d3d12:
     python tools/live_board/clip.py --run checkpoints/<run> --out clip.mp4 [--upto STEP]
 """
 import argparse
+import json
 import sys
 from pathlib import Path
 
@@ -22,7 +27,6 @@ W, H, FPS, DT = 1280, 720, 30, 0.002
 T_SHOW, T_GO, T_PUSH, T_END = 8.5, 10.0, 14.25, 20.0
 PUSH_VEL = (0.0, 0.8)
 GOAL_X = 1.2
-LABEL_PX = 26
 SPACING = 0.75
 N_LANES = 5
 
@@ -32,12 +36,6 @@ def select_lanes(n_ckpts: int, n: int = N_LANES):
     if n_ckpts <= n:
         return list(range(n_ckpts))
     return sorted({round(i * (n_ckpts - 1) / (n - 1)) for i in range(n)})
-
-
-def lane_label(minutes: int) -> str:
-    from texts import clock_text
-
-    return clock_text(minutes, "kanji").split(" ", 1)[1]
 
 
 def simulate(lanes):
@@ -67,35 +65,48 @@ def camera(n):
                 azimuth=180.0, elevation=-24.0)
 
 
+def sign_tracks(frames, n, cam, fovy, project):
+    """Per frame, per lane: sign anchor (u/W, v/H) above the duck, or None off screen.
+    Odd lanes sit higher so neighbouring signs never overlap."""
+    out = []
+    for q in frames:
+        row = []
+        for i in range(n):
+            lift = 0.28 if i % 2 == 0 else 0.46
+            u, v = project(q[i, :3] + [0, 0, lift], cam, W, H, fovy)
+            row.append([round(u / W, 4), round(v / H, 4)] if 0 < u < W and 0 < v < H else None)
+        out.append(row)
+    return out
+
+
+def meta_path(out_path) -> Path:
+    return Path(out_path).with_suffix(".json")
+
+
 def render(spec, out_path):
-    """spec: [(onnx path, label)] left to right on screen."""
+    """spec: [(onnx path, minutes since training start)] left to right on screen."""
     import imageio_ffmpeg
     import mediapy
-    from PIL import Image, ImageDraw
 
     from race_sim import load_lanes
-    from render_race import Overlay, Stage, project
+    from render_race import Stage, project
 
-    lanes = load_lanes(spec, spacing=SPACING)
+    lanes = load_lanes([(p, str(m)) for p, m in spec], spacing=SPACING)
     frames = simulate(lanes)
     n = len(lanes)
     stage = Stage(lanes[0].model, W, H)
-    cam, lines, ov = camera(n), course_lines(n), Overlay()
-    out = []
-    for q in frames:
-        img = Image.fromarray(stage.draw(q, cam, lines))
-        dr = ImageDraw.Draw(img, "RGBA")
-        for i, (_, label) in enumerate(spec):
-            lift = 0.28 if i % 2 == 0 else 0.46  # stagger so neighbouring signs never overlap
-            u, v = project(q[i, :3] + [0, 0, lift], cam, W, H, stage.fovy)
-            if 0 < u < W and 0 < v < H:
-                ov.panel(dr, label, (u, v), LABEL_PX)
-        out.append(np.asarray(img)[:, :, :3])
+    cam, lines = camera(n), course_lines(n)
+    out = [stage.draw(q, cam, lines)[:, :, :3] for q in frames]
+    meta = {"fps": FPS, "minutes": [m for _, m in spec], "signs": sign_tracks(frames, n, cam, stage.fovy, project)}
     stage.close()
+    # json first: the watcher treats the mp4 as "done", so it must appear last
+    tmp = meta_path(out_path).with_suffix(".tmp")
+    tmp.write_text(json.dumps(meta, separators=(",", ":")))
+    tmp.replace(meta_path(out_path))
     mediapy.set_ffmpeg(imageio_ffmpeg.get_ffmpeg_exe())
-    tmp = Path(out_path).with_suffix(".tmp.mp4")
-    mediapy.write_video(str(tmp), out, fps=FPS)
-    tmp.replace(out_path)
+    tmpv = Path(out_path).with_suffix(".tmp.mp4")
+    mediapy.write_video(str(tmpv), out, fps=FPS)
+    tmpv.replace(out_path)
 
 
 def course_lines(n):
@@ -115,7 +126,7 @@ def spec_for(run_dir, upto=None):
         ck = [c for c in ck if c[0] <= upto]
     if not ck:
         raise SystemExit("no checkpoints")
-    return [(ck[i][2], lane_label(minutes_since_start(ck, i))) for i in select_lanes(len(ck))]
+    return [(ck[i][2], minutes_since_start(ck, i)) for i in select_lanes(len(ck))]
 
 
 if __name__ == "__main__":
@@ -125,6 +136,6 @@ if __name__ == "__main__":
     ap.add_argument("--upto", type=int, help="latest step to include (default: all)")
     a = ap.parse_args()
     s = spec_for(a.run, a.upto)
-    print("lanes:", [lb for _, lb in s], flush=True)
+    print("lanes (minutes):", [m for _, m in s], flush=True)
     render(s, a.out)
     print("wrote", a.out)

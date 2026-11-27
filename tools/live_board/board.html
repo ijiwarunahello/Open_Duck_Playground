@@ -31,6 +31,10 @@ videos next to this file play instead; the board comes back as soon as data is f
   #curve { flex: 1; min-height: 0; display: flex; flex-direction: column; gap: 1vh; }
   #curve .mid { color: var(--dim); }
   #curve svg { flex: 1 1 0; width: 100%; height: 0; }
+  #signs { position: absolute; inset: 0; pointer-events: none; overflow: hidden; }
+  .sign { position: absolute; transform: translate(-50%, -50%); white-space: nowrap; line-height: 1.15;
+    padding: .25em .4em; border-radius: .35em; background: rgba(255, 255, 255, .92); color: #1d2421; font-weight: 700; }
+  .sign rt { color: #4a524e; }
   #fallback { position: fixed; inset: 0; background: #000; display: none; }
   #fallback video { width: 100%; height: 100%; object-fit: contain; }
   body.offline #fallback { display: block; }
@@ -38,7 +42,7 @@ videos next to this file play instead; the board comes back as soon as data is f
 </head>
 <body>
 <div id="board">
-  <div id="stage"><video id="clip" muted playsinline autoplay></video></div>
+  <div id="stage"><video id="clip" muted playsinline autoplay></video><div id="signs"></div></div>
   <div id="side">
     <div id="live"><i></i><span id="live-text"></span></div>
     <div id="summary">
@@ -124,11 +128,58 @@ function render() {
   v.dataset.next = latest || "";
 }
 
+// Lane signs: the clip has no text; clip_<step>.json gives each lane's training minutes and
+// its sign anchor per frame (fractions of the frame), drawn here so wording lives in this page.
+let meta = null;
+async function loadMeta(file) {
+  meta = null;
+  $("signs").innerHTML = "";
+  try {
+    const r = await fetch(`${SRC}/clips/${file.replace(/\.mp4$/, ".json")}`, { cache: "no-store" });
+    if (!r.ok || shownClip !== file) return;
+    const m = await r.json();
+    if (shownClip !== file) return;
+    $("signs").innerHTML = m.minutes.map((min) => `<div class="sign">${ruby(clockText(min))}</div>`).join("");
+    meta = m;
+  } catch (e) { /* no signs: the clip still plays */ }
+}
+function placeSigns(mediaTime) {
+  const v = $("clip"), els = $("signs").children;
+  if (!meta || !v.videoWidth || els.length !== meta.minutes.length) return;
+  // displayed picture inside the element (object-fit: contain)
+  const s = Math.min(v.clientWidth / v.videoWidth, v.clientHeight / v.videoHeight);
+  const cw = v.videoWidth * s, ch = v.videoHeight * s;
+  const ox = v.offsetLeft + (v.clientWidth - cw) / 2, oy = v.offsetTop + (v.clientHeight - ch) / 2;
+  const row = meta.signs[Math.min(Math.round(mediaTime * meta.fps), meta.signs.length - 1)] || [];
+  $("signs").style.fontSize = `${cw * 0.021}px`;
+  for (let i = 0; i < els.length; i++) {
+    const p = row[i];
+    els[i].style.display = p ? "" : "none";
+    if (p) { els[i].style.left = `${ox + p[0] * cw}px`; els[i].style.top = `${oy + p[1] * ch}px`; }
+  }
+}
+(function tick() {
+  const v = $("clip");
+  if ("requestVideoFrameCallback" in v) {
+    const onFrame = (now, md) => { placeSigns(md.mediaTime); v.requestVideoFrameCallback(onFrame); };
+    v.requestVideoFrameCallback(onFrame);
+    setInterval(() => { if (v.paused) placeSigns(v.currentTime); }, 500);  // resize while paused
+  } else {
+    const loop = () => { placeSigns(v.currentTime); requestAnimationFrame(loop); };
+    requestAnimationFrame(loop);
+  }
+})();
+
+// ?seek=<seconds>: hold the clip at that time (for checking sign placement without playback)
+const SEEK = q.has("seek") ? parseFloat(q.get("seek")) : null;
+if (SEEK !== null) $("clip").addEventListener("loadedmetadata", () => { const v = $("clip"); v.pause(); v.currentTime = SEEK; });
+
 function playClip(file) {
   const v = $("clip");
   shownClip = file;
+  loadMeta(file);
   v.src = `${SRC}/clips/${file}`;
-  v.play().catch(() => {});
+  if (SEEK === null) v.play().catch(() => {});
 }
 // Swap to a newer clip only at the end of a loop so a run is never cut mid-way.
 $("clip").addEventListener("ended", () => {

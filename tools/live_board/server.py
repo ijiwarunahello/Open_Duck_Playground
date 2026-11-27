@@ -29,6 +29,8 @@ def make_app(data_dir):
 
     @app.get("/clips/<name>")
     def clip(name):
+        if name.endswith(".json"):
+            return send_from_directory(data_dir / "clips", name, mimetype="application/json")
         return send_from_directory(data_dir / "clips", name, mimetype="video/mp4", conditional=True)
 
     @app.get("/")

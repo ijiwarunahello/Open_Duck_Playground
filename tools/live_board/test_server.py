@@ -17,3 +17,6 @@ def test_routes(tmp_path):
     r = c.get("/clips/clip_0.mp4", headers={"Range": "bytes=2-4"})
     assert r.status_code == 206 and r.data == b"234"  # Safari needs range requests for video
     assert c.get("/clips/../status.json").status_code == 404
+    (tmp_path / "clips" / "clip_0.json").write_text('{"fps": 30}')
+    r = c.get("/clips/clip_0.json")
+    assert r.json == {"fps": 30} and r.headers["Access-Control-Allow-Origin"] == "*"
