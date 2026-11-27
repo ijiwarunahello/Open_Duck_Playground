@@ -17,8 +17,11 @@ LANES = [
     (str(CKPT / "2026_11_27_045005_300482560.onnx"), "3じかん"),
 ]
 
-# Chosen with push_probe.py (2026-11-27): at vy=0.8 only the 0-min lane falls and every
-# walking lane still covers > 1.2 m in 20 s; at 1.0 the 3-hour lane drops to 0.73 m.
-PUSH_TIME_S = 5.0  # seconds after the start signal
+# Chosen 2026-11-27 by sweeping push strength and time in the render timeline (10 s standing,
+# then forward with heading/lane-centre steering). Below 0.7 m/s nobody falls; at 0.7-0.8 m/s
+# which lanes fall depends on the gait phase at the push. At 0.8 m/s, 4.25 s after the start,
+# only the 0-minute lane falls; the 27-minute lane stands still and the walking lanes recover.
+# Every lane gets the same push at the same time.
+PUSH_TIME_S = 4.25  # seconds after the start signal
 PUSH_VEL = (0.0, 0.8)  # m/s added to the base, same as training pushes (range 0.1-1.0)
 GOAL_X = 1.2  # metres from the start line
