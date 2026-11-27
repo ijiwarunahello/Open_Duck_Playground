@@ -20,6 +20,7 @@ import numpy as np
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from lanes import CKPT  # noqa: E402
+from texts import KANA, SCRIPTS, clock_text as _clock_text  # noqa: E402
 
 W, H, FPS = 1920, 1080, 30
 T_TITLE, STAGE_S, T_END = 4.0, 8.0, 50.0
@@ -30,9 +31,9 @@ WARMUP_S = 3.0
 SEED = 7
 CAM = dict(lookat=(0.0, 0.6, 0.0), distance=5.5, azimuth=125.0, elevation=-30.0)
 
-TITLE = "みんなで れんしゅう"
-SUMMARY_TITLE = "ころんだ かず"
-SUMMARY_LINE = "8192たいで 3じかん = 69にちぶんの れんしゅう"
+TITLE = KANA["crowd_title"]
+SUMMARY_TITLE = KANA["summary_title"]
+SUMMARY_LINE = KANA["summary_line"]
 
 # (checkpoint, minutes shown). 3 hours = run end (3 h 6 min wall clock).
 STAGES = [
@@ -44,12 +45,8 @@ STAGES = [
 ]
 
 
-def clock_text(minutes: int) -> str:
-    h, m = divmod(int(minutes), 60)
-    if m == 0 and h:
-        return f"れんしゅう {h}じかん"
-    unit = "ふん" if m % 10 in (2, 5, 7, 9) else "ぷん"
-    return f"れんしゅう {h}じかん{m}{unit}" if h else f"れんしゅう {m}{unit}"
+def clock_text(minutes: int, script: str = "kana") -> str:
+    return _clock_text(minutes, script)
 
 
 def stage_at(t: float) -> int:
@@ -90,40 +87,42 @@ def _frame(k, stage, ov):
     else:
         fi = min(int(round((t - T_TITLE - i * STAGE_S) * FPS)), len(frames) - 1)
         q, n_fall = frames[fi], int(falls[fi])
+    T, script = _DATA["T"], _DATA["script"]
     img = Image.fromarray(stage.draw(q, CAM))
     dr = ImageDraw.Draw(img, "RGBA")
     if t < T_TITLE:
-        ov.panel(dr, TITLE, (W / 2, H / 2), 120)
+        ov.panel(dr, T["crowd_title"], (W / 2, H / 2), 120)
     else:
-        text = clock_text(clock_minutes(t))
-        tw = dr.textlength(text, font=ov.font(64))
-        ov.panel(dr, text, (60 + tw / 2 + 21, 80), 64)
-        label = f"ころんだ {n_fall}"
-        lw = dr.textlength(label, font=ov.font(64))
-        ov.panel(dr, label, (W - 60 - lw / 2 - 21, 80), 64, fg=(255, 255, 255), bg=(226, 85, 27, 240))
+        text = clock_text(clock_minutes(t), script)
+        tw, bh = ov.measure(text, 64)[0], ov.box_height(text, 64)
+        ov.panel(dr, text, (60 + tw / 2 + 21, 40 + bh / 2), 64)
+        label = f"{T['fall_count']} {n_fall}"
+        lw, lh = ov.measure(label, 64)[0], ov.box_height(label, 64)
+        ov.panel(dr, label, (W - 60 - lw / 2 - 21, 40 + lh / 2), 64, fg=(255, 255, 255), bg=(226, 85, 27, 240))
     return np.asarray(img)[:, :, :3]
 
 
 def _summary(ov, t):
     from PIL import Image, ImageDraw
 
+    T, script = _DATA["T"], _DATA["script"]
     img = Image.new("RGB", (W, H), (40, 48, 45))
     dr = ImageDraw.Draw(img, "RGBA")
-    ov.panel(dr, SUMMARY_TITLE, (W / 2, 110), 80)
+    ov.panel(dr, T["summary_title"], (W / 2, 40 + ov.box_height(T["summary_title"], 80) / 2), 80)
     counts = [int(f[-1]) for f in _DATA["falls"]]
-    heights = bar_heights(counts, 520)
+    heights = bar_heights(counts, 480)
     n = len(counts)
     bw, gap = 200, 110
     x0 = (W - (n * bw + (n - 1) * gap)) / 2
-    base = 860
+    base = 800
     for j, (c, hpx) in enumerate(zip(counts, heights)):
         x = x0 + j * (bw + gap)
         dr.rectangle((x, base - hpx, x + bw, base), fill=(226, 85, 27, 255))
         dr.text((x + bw / 2, base - hpx - 16), str(c), font=ov.font(56), fill=(255, 255, 255), anchor="mb")
-        dr.text((x + bw / 2, base + 22), clock_text(STAGES[j][1]).replace("れんしゅう ", ""), font=ov.font(44),
-                fill=(235, 240, 238), anchor="mt")
+        name = clock_text(STAGES[j][1], script).split(" ", 1)[1]
+        ov.panel(dr, name, (x + bw / 2, base + 14 + ov.box_height(name, 44) / 2), 44, fg=(235, 240, 238), bg=(0, 0, 0, 0))
     if t >= T_TITLE + len(STAGES) * STAGE_S + 1.5:
-        ov.panel(dr, SUMMARY_LINE, (W / 2, 1000), 64)
+        ov.stack_up(dr, [T["summary_line"]], 64, H - 30)
     return np.asarray(img)
 
 
@@ -153,7 +152,7 @@ def _render_range(args):
     return out_path
 
 
-def render(out_path, workers=6):
+def render(out_path, workers=6, script="kana"):
     import imageio_ffmpeg
 
     from crowd import simulate_crowd
@@ -166,6 +165,7 @@ def render(out_path, workers=6):
         falls.append(fa)
         print(f"  falls in {STAGE_S:.0f} s: {fa[-1]}", flush=True)
     _DATA["frames"], _DATA["falls"] = frames, falls
+    _DATA["T"], _DATA["script"] = SCRIPTS[script], script
 
     total = int(T_END * FPS)
     bounds = np.linspace(0, total, workers + 1).astype(int)
@@ -184,4 +184,6 @@ def render(out_path, workers=6):
 if __name__ == "__main__":
     ap = argparse.ArgumentParser()
     ap.add_argument("--out", default="crowd.mp4")
-    render(ap.parse_args().out)
+    ap.add_argument("--script", choices=sorted(SCRIPTS), default="kana")
+    args = ap.parse_args()
+    render(args.out, script=args.script)

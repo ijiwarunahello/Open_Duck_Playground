@@ -12,6 +12,7 @@ from pathlib import Path
 import numpy as np
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
+from texts import KANA, SCRIPTS, parse_ruby  # noqa: E402
 
 W, H, FPS, DT = 1920, 1080, 30, 0.002
 FONT = "/mnt/c/Windows/Fonts/BIZ-UDGothicB.ttc"
@@ -19,7 +20,7 @@ SPACING = 0.55  # with lane-centre steering the closest approach is ~0.45 m belo
 
 # video timeline (seconds)
 T_PAN, T_GO, T_RACE, T_RACE_END, T_REPLAY_END, T_RESULTS_END, T_END = 4.0, 10.0, 12.0, 30.0, 38.0, 42.0, 52.0
-CROWD_TEXT = "8192たいで いっしょに れんしゅう"
+CROWD_TEXT = KANA["crowd"]
 CROWD_SIDE = 20  # 20 x 20 = 400 ducks
 CROWD_WARMUP_S = 5.0
 CROWD_SEED = 42
@@ -29,10 +30,10 @@ REPLAY_SIM = (13.6, 16.8)  # sim window shown in slow motion (push happens at 14
 REPLAY_SPEED = 0.4
 FADE_S = 0.5
 
-TITLE = "アヒルの かけっこ"
-GO_TEXT = "よーい、ドン!"
-PUSH_TEXT = "えいっ!"
-END_LINES = ("3じかんで 69にちぶん れんしゅうしたよ", "となりの duck も、", "こうして れんしゅうした AI で あるいています")
+TITLE = KANA["title"]
+GO_TEXT = KANA["go"]
+PUSH_TEXT = KANA["push"]
+END_LINES = KANA["end"]
 LABEL_PX = 40  # lane signs (plan floor: 40 px)
 END_PX = 64  # closing lines (plan floor: 64 px)
 
@@ -58,14 +59,15 @@ def project(p, cam, width, height, fovy):
     return width / 2 + focal * (v @ r) / z, height / 2 - focal * (v @ u) / z
 
 
-def result_label(fallen, dx, goal_x):
+def result_label(fallen, dx, goal_x, script="kana"):
+    t = SCRIPTS[script]
     if fallen:
-        return "ころんだ"
+        return t["fallen"]
     if dx >= goal_x:
-        return "ゴール!"
+        return t["goal"]
     if dx < 0.2:
-        return "うごかない"
-    return "とちゅう"
+        return t["still"]
+    return t["midway"]
 
 
 HEADING_GAIN = 2.0  # rad/s of turn command per rad of heading error
@@ -190,14 +192,44 @@ class Overlay:
             self._fonts[size] = self._ImageFont.truetype(FONT, size)
         return self._fonts[size]
 
+    def measure(self, text, size):
+        """(width, height) of text with optional {base|ruby} markup, without padding."""
+        f, rf = self.font(size), self.font(max(12, size // 2))
+        segs = parse_ruby(text)
+        has_ruby = any(r for _, r in segs)
+        w = sum(max(f.getlength(b), rf.getlength(r) if r else 0.0) for b, r in segs)
+        h = sum(f.getmetrics()) + (sum(rf.getmetrics()) if has_ruby else 0)
+        return w, h
+
+    def box_height(self, text, size):
+        return self.measure(text, size)[1] + 2 * (size // 3)
+
     def panel(self, draw, text, center, size, fg=(29, 36, 33), bg=(255, 255, 255, 235), pad=None):
-        f = self.font(size)
-        l, t, r, b = draw.textbbox((0, 0), text, font=f)
+        f, rf = self.font(size), self.font(max(12, size // 2))
+        segs = parse_ruby(text)
+        rh = sum(rf.getmetrics()) if any(r for _, r in segs) else 0
+        tw, th = self.measure(text, size)
         pad = pad or size // 3
-        w, h = r - l + 2 * pad, b - t + 2 * pad
+        w, h = tw + 2 * pad, th + 2 * pad
         x, y = center[0] - w / 2, center[1] - h / 2
         draw.rounded_rectangle((x, y, x + w, y + h), radius=pad, fill=bg)
-        draw.text((x + pad - l, y + pad - t), text, font=f, fill=fg)
+        cx, top = x + pad, y + pad
+        for base, ruby in segs:
+            bw = f.getlength(base)
+            sw = max(bw, rf.getlength(ruby) if ruby else 0.0)
+            draw.text((cx + (sw - bw) / 2, top + rh), base, font=f, fill=fg, anchor="la")
+            if ruby:
+                draw.text((cx + sw / 2, top), ruby, font=rf, fill=fg, anchor="ma")
+            cx += sw
+
+    def stack_up(self, draw, lines, size, bottom, gap=14):
+        """Draw lines centred, stacked upward from `bottom`; returns the top y."""
+        y = bottom
+        for line in reversed(lines):
+            bh = self.box_height(line, size)
+            self.panel(draw, line, (W / 2, y - bh / 2), size)
+            y -= bh + gap
+        return y + gap
 
     def shout(self, draw, text, center, size, fg=(226, 85, 27)):
         f = self.font(size)
@@ -233,7 +265,7 @@ def end_cam(n_lanes, goal_x):
     return dict(lookat=(goal_x, (n_lanes - 1) * SPACING / 2, 0.0), distance=3.9, azimuth=180.0, elevation=-38.0)
 
 
-def render(out_path, lanes_spec=None, push_time=None, push_vel=None, goal_x=None):
+def render(out_path, lanes_spec=None, push_time=None, push_vel=None, goal_x=None, script="kana"):
     import mediapy
     import imageio_ffmpeg
     from PIL import Image, ImageDraw
@@ -249,7 +281,8 @@ def render(out_path, lanes_spec=None, push_time=None, push_vel=None, goal_x=None
     # Lane order left to right on screen: 0 minutes ... 3 hours.
     ordered = list(lanes_spec)
     lanes = load_lanes(ordered, spacing=SPACING)
-    labels = [lb for _, lb in ordered]
+    T = SCRIPTS[script]
+    labels = T["lanes"] if lanes_spec is LANES else [lb for _, lb in ordered]
     n = len(lanes)
     print("simulating...", flush=True)
     frames, fallen, replay = simulate(lanes, push_time, push_vel, goal_x)
@@ -260,7 +293,7 @@ def render(out_path, lanes_spec=None, push_time=None, push_vel=None, goal_x=None
     assert min_gap > 0.25, "ducks drifted into a neighbouring lane"
 
     final = frames[-1]
-    results = [result_label(bool(fallen[-1, i]), float(final[i, 0] - frames[0, i, 0]), goal_x) for i in range(n)]
+    results = [result_label(bool(fallen[-1, i]), float(final[i, 0] - frames[0, i, 0]), goal_x, script) for i in range(n)]
     print("results:", list(zip(labels, results)), flush=True)
 
     print("simulating crowd...", flush=True)
@@ -297,12 +330,12 @@ def render(out_path, lanes_spec=None, push_time=None, push_vel=None, goal_x=None
                     if 0 < u < W and 0 < v < H:
                         ov.panel(dr, labels[i], (u, v), LABEL_PX if t >= T_RACE else 48)
             if t < T_PAN:
-                ov.panel(dr, TITLE, (W / 2, H / 2), 120)
+                ov.panel(dr, T["title"], (W / 2, H / 2), 120)
             elif T_GO <= t < T_RACE:
-                ov.shout(dr, GO_TEXT, (W / 2, H * 0.42), 150)
+                ov.shout(dr, T["go"], (W / 2, H * 0.42), 150)
             push_t = T_GO + push_time
             if push_t - 0.3 <= t < push_t + 1.5:
-                ov.shout(dr, PUSH_TEXT, (W / 2, H * 0.12), 110)
+                ov.shout(dr, T["push"], (W / 2, H * 0.12), 110)
                 for i in range(n):
                     p = q[i, :3] + [0, 0, 0.12]
                     a0 = project(p - [0, 0.40, 0], cam, W, H, stage.fovy)
@@ -319,13 +352,13 @@ def render(out_path, lanes_spec=None, push_time=None, push_vel=None, goal_x=None
                 cam = dict(lookat=(q[i, 0], start_y + 0.12, 0.14), distance=1.15, azimuth=180.0, elevation=-24.0)
                 im = Image.fromarray(half.draw([q[i]], cam))
                 d2 = ImageDraw.Draw(im, "RGBA")
-                tw = d2.textlength(name, font=ov.font(56))
-                ov.panel(d2, name, (40 + tw / 2 + 19, 90), 56)
+                tw = ov.measure(name, 56)[0]
+                ov.panel(d2, name, (40 + tw / 2 + 19, 100), 56)
                 halves.append(np.asarray(im))
             img = Image.fromarray(np.concatenate(halves, axis=1))
             dr = ImageDraw.Draw(img, "RGBA")
             dr.rectangle((W // 2 - 4, 0, W // 2 + 4, H), fill=(255, 255, 255, 255))
-            ov.panel(dr, "スロー", (W - 140, H - 80), 48, fg=(255, 255, 255), bg=(0, 0, 0, 150))
+            ov.panel(dr, T["slow"], (W - 140, H - 80), 48, fg=(255, 255, 255), bg=(0, 0, 0, 150))
             frame = np.asarray(img)
         elif t < T_RESULTS_END:
             a = (t - T_REPLAY_END) / (T_RESULTS_END - T_REPLAY_END)
@@ -334,11 +367,12 @@ def render(out_path, lanes_spec=None, push_time=None, push_vel=None, goal_x=None
             dr = ImageDraw.Draw(img, "RGBA")
             for i in range(n):
                 u, v = project(final[i, :3] + [0, 0, 0.30], cam, W, H, stage.fovy)
-                ov.panel(dr, labels[i], (u, v - 34), LABEL_PX)
-                ov.panel(dr, results[i], (u, v + 26), LABEL_PX, fg=(255, 255, 255), bg=(226, 85, 27, 235))
+                lh, rh_ = ov.box_height(labels[i], LABEL_PX), ov.box_height(results[i], LABEL_PX)
+                ov.panel(dr, labels[i], (u, v - lh / 2 - 3), LABEL_PX)
+                ov.panel(dr, results[i], (u, v + rh_ / 2 + 3), LABEL_PX, fg=(255, 255, 255), bg=(226, 85, 27, 235))
             if t >= T_REPLAY_END + 1.0:
                 dr.rectangle((0, 0, W, H), fill=(0, 0, 0, 90))
-                ov.panel(dr, END_LINES[0], (W / 2, H - 120), END_PX + 8)
+                ov.stack_up(dr, T["end"][:1], END_PX + 8, H - 50)
             frame = np.asarray(img)
         else:
             a = (t - T_RESULTS_END) / (T_END - T_RESULTS_END)
@@ -347,11 +381,12 @@ def render(out_path, lanes_spec=None, push_time=None, push_vel=None, goal_x=None
             img = Image.fromarray(crowd_stage.draw(q, cam))
             dr = ImageDraw.Draw(img, "RGBA")
             if t >= T_RESULTS_END + 2.5:
-                ov.panel(dr, CROWD_TEXT, (W / 2, 110), END_PX + 8)
+                bh = ov.box_height(T["crowd"], END_PX + 8)
+                ov.panel(dr, T["crowd"], (W / 2, 40 + bh / 2), END_PX + 8)
             if t >= T_RESULTS_END + 5.0:
-                dr.rectangle((0, H - 300, W, H), fill=(0, 0, 0, 90))
-                ov.panel(dr, END_LINES[1], (W / 2, H - 205), END_PX)
-                ov.panel(dr, END_LINES[2], (W / 2, H - 95), END_PX)
+                top = H - 40 - sum(ov.box_height(x, END_PX) + 14 for x in T["end"][1:])
+                dr.rectangle((0, top - 20, W, H), fill=(0, 0, 0, 90))
+                ov.stack_up(dr, T["end"][1:], END_PX, H - 40)
             frame = np.asarray(img)
         fade = min(1.0, (k + 1) / (FADE_S * FPS), (total - k) / (FADE_S * FPS))
         if fade < 1.0:
@@ -370,4 +405,6 @@ def render(out_path, lanes_spec=None, push_time=None, push_vel=None, goal_x=None
 if __name__ == "__main__":
     ap = argparse.ArgumentParser()
     ap.add_argument("--out", default="race.mp4")
-    render(ap.parse_args().out)
+    ap.add_argument("--script", choices=sorted(SCRIPTS), default="kana")
+    args = ap.parse_args()
+    render(args.out, script=args.script)

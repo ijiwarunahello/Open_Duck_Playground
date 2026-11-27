@@ -37,3 +37,8 @@ def test_clock_counts_up_between_stages():
 def test_bar_heights_follow_counts():
     from crowd_video import bar_heights
     assert bar_heights([171, 143, 100, 0], max_px=300) == [300, 251, 175, 0]
+
+
+def test_clock_text_kanji_in_crowd_video():
+    from crowd_video import clock_text
+    assert clock_text(40, script="kanji") == "{練習|れんしゅう} 40{分|ぷん}"

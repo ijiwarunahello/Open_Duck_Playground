@@ -98,3 +98,19 @@ def test_crowd_cam_pulls_back():
     assert near["lookat"][:2] == pytest.approx((0.4, 0.4))
     ds = [R.crowd_cam(a / 10, (0.4, 0.4))["distance"] for a in range(11)]
     assert all(b >= a for a, b in zip(ds, ds[1:]))
+
+
+def test_overlay_measures_ruby_taller_and_at_least_base_width():
+    from render_race import Overlay
+    ov = Overlay()
+    w_plain, h_plain = ov.measure("練習 0分", 48)
+    w_ruby, h_ruby = ov.measure("{練習|れんしゅう} 0{分|ぷん}", 48)
+    assert w_ruby >= w_plain
+    assert h_ruby > h_plain
+
+
+def test_result_label_kanji():
+    from render_race import result_label
+    assert result_label(True, 0.0, 1.2, script="kanji") == "{転|ころ}んだ"
+    assert result_label(False, 0.05, 1.2, script="kanji") == "{動|うご}かない"
+    assert result_label(False, 1.3, 1.2, script="kanji") == "ゴール!"
