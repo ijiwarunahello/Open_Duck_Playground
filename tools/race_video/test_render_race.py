@@ -70,3 +70,14 @@ def test_heading_cmd_returns_toward_lane_center():
     assert heading_cmd(q, lane_y=0.0)[2] < 0
     q[1] = -0.4
     assert heading_cmd(q, lane_y=0.0)[2] > 0
+
+
+def test_text_sizes_meet_plan_floor_and_closing_lines_fit():
+    from PIL import ImageFont
+    import render_race as R
+    assert R.LABEL_PX >= 40
+    assert R.END_PX >= 64
+    f = ImageFont.truetype(R.FONT, R.END_PX)
+    for line in R.END_LINES:
+        assert f.getlength(line) <= R.W - 80, line
+    assert "".join(R.END_LINES[1:]) == "となりの duck も、こうして れんしゅうした AI で あるいています"

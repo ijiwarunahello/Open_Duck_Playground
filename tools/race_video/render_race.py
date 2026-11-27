@@ -26,8 +26,9 @@ FADE_S = 0.5
 TITLE = "アヒルの かけっこ"
 GO_TEXT = "よーい、ドン!"
 PUSH_TEXT = "えいっ!"
-END_LINE1 = "3じかんで 69にちぶん れんしゅうしたよ"
-END_LINE2 = "となりの duck も、こうして れんしゅうした AI で あるいています"
+END_LINES = ("3じかんで 69にちぶん れんしゅうしたよ", "となりの duck も、", "こうして れんしゅうした AI で あるいています")
+LABEL_PX = 40  # lane signs (plan floor: 40 px)
+END_PX = 64  # closing lines (plan floor: 64 px)
 
 
 # ---------- pure helpers (tested) ----------
@@ -275,7 +276,7 @@ def render(out_path, lanes_spec=None, push_time=None, push_vel=None, goal_x=None
                 for i in range(n):
                     u, v = project(q[i, :3] + [0, 0, 0.30], cam, W, H, stage.fovy)
                     if 0 < u < W and 0 < v < H:
-                        ov.panel(dr, labels[i], (u, v), 36 if t >= T_RACE else 48)
+                        ov.panel(dr, labels[i], (u, v), LABEL_PX if t >= T_RACE else 48)
             if t < T_PAN:
                 ov.panel(dr, TITLE, (W / 2, H / 2), 120)
             elif T_GO <= t < T_RACE:
@@ -314,13 +315,14 @@ def render(out_path, lanes_spec=None, push_time=None, push_vel=None, goal_x=None
             dr = ImageDraw.Draw(img, "RGBA")
             for i in range(n):
                 u, v = project(final[i, :3] + [0, 0, 0.30], cam, W, H, stage.fovy)
-                ov.panel(dr, labels[i], (u, v - 30), 34)
-                ov.panel(dr, results[i], (u, v + 22), 34, fg=(255, 255, 255), bg=(226, 85, 27, 235))
+                ov.panel(dr, labels[i], (u, v - 34), LABEL_PX)
+                ov.panel(dr, results[i], (u, v + 26), LABEL_PX, fg=(255, 255, 255), bg=(226, 85, 27, 235))
             if t >= T_REPLAY_END + 1.0:
                 dr.rectangle((0, 0, W, H), fill=(0, 0, 0, 90))
-                ov.panel(dr, END_LINE1, (W / 2, H - 230), 72)
+                ov.panel(dr, END_LINES[0], (W / 2, H - 330), END_PX + 8)
             if t >= T_REPLAY_END + 2.5:
-                ov.panel(dr, END_LINE2, (W / 2, H - 110), 52)
+                ov.panel(dr, END_LINES[1], (W / 2, H - 205), END_PX)
+                ov.panel(dr, END_LINES[2], (W / 2, H - 95), END_PX)
             frame = np.asarray(img)
         fade = min(1.0, (k + 1) / (FADE_S * FPS), (total - k) / (FADE_S * FPS))
         if fade < 1.0:
